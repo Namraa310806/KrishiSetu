@@ -49,7 +49,7 @@ const LandingPage = () => {
         </div>
         <h1>Track Your Produce,<br />Optimize Your Profits</h1>
         <p>From Shipment to Your Fields, We Provide Real-Time Supply Chain Visibility for Farmers</p>
-        <button className="get-started" onClick={handleGetStarted}>
+        <button className="primary-btn get-started" onClick={handleGetStarted}>
           Get Started
         </button>
       </div>
