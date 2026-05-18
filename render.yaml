@@ -4,12 +4,8 @@ services:
     runtime: node
     plan: free
     buildCommand: |
-      cd server
-      npm install
-      cd ../client
       npm install
       npm run build
-      cd ..
     startCommand: |
       cd server
       node index.js
@@ -18,7 +14,7 @@ services:
         value: production
       - key: PORT
         value: 5000
-      - key: MONGO_URI
+      - key: MONGODB_URI
         sync: false
       - key: MONGO_DB_NAME
         sync: false
