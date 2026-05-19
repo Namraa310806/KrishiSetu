@@ -677,8 +677,8 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
   ];
 
   // Create an object to store the actual filled fields
-  const filledFields: Record<string, any> = {};
-  const registeredFields: string[] = [];
+  const filledFields: Record<string, unknown> = {};
+  let registeredFields: string[] = [];
 
   // Check which fields were actually filled
   for (const field of possibleFormFields) {
@@ -697,15 +697,8 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
       filledFields.certifications = JSON.parse(filledFields.certifications);
     } catch (e) {
       console.error("Error parsing certifications:", e);
+      return res.status(400).json({ message: "Invalid certifications format" });
     }
-  }
-
-  // Parse numbers if needed
-  if (filledFields.price && typeof filledFields.price === "string" && !isNaN(Number(filledFields.price))) {
-    filledFields.price = Number(filledFields.price);
-  }
-  if (filledFields.quantity && typeof filledFields.quantity === "string" && !isNaN(Number(filledFields.quantity))) {
-    filledFields.quantity = Number(filledFields.quantity);
   }
 
   // If you handle paymentProof file upload, set paymentProofUrl here
@@ -715,6 +708,65 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
       registeredFields.push("paymentProofUrl");
     }
   }
+
+  const normalizeNumber = (value: unknown) => {
+    if (value === undefined || value === null || value === "") return undefined;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return undefined;
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : value;
+    }
+    return value;
+  };
+
+  const normalizeDateString = (value: unknown) => {
+    if (value === undefined || value === null || value === "") return undefined;
+    return value;
+  };
+
+  const ownershipTransferUpdateSchema = z.object({
+    name: z.string().trim().min(1).optional(),
+    category: z.string().trim().min(1).optional(),
+    description: z.string().trim().min(1).optional(),
+    quantity: z.preprocess(
+      normalizeNumber,
+      z.number({ invalid_type_error: "Quantity must be a number" })
+    ).optional(),
+    unit: z.string().trim().min(1).optional(),
+    distributorName: z.string().trim().min(1).optional(),
+    warehouseLocation: z.string().trim().min(1).optional(),
+    dispatchDate: z.preprocess(
+      normalizeDateString,
+      z.string().trim().min(1).refine((value: string) => !Number.isNaN(Date.parse(value)), {
+        message: "Invalid dispatchDate",
+      })
+    ).optional(),
+    certifications: z.array(z.string().trim().min(1)).optional(),
+    price: z.preprocess(
+      normalizeNumber,
+      z.number({ invalid_type_error: "Price must be a number" }).min(0, "Price must be non-negative")
+    ).optional(),
+    paymentProofUrl: z.string().trim().min(1).optional(),
+    storeName: z.string().trim().min(1).optional(),
+    storeLocation: z.string().trim().min(1).optional(),
+    arrivalDate: z.preprocess(
+      normalizeDateString,
+      z.string().trim().min(1).refine((value: string) => !Number.isNaN(Date.parse(value)), {
+        message: "Invalid arrivalDate",
+      })
+    ).optional(),
+  });
+
+  const validatedFields = ownershipTransferUpdateSchema.safeParse(filledFields);
+  if (!validatedFields.success) {
+    return res.status(400).json({
+      message: "Invalid ownership transfer data",
+      errors: validatedFields.error.format(),
+    });
+  }
+
+  registeredFields = Object.keys(validatedFields.data);
 
   try {
     console.log("Getting user by firebaseUid");
@@ -760,7 +812,7 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
 
     // 2) Update product with the filled fields
     console.log("Updating product");
-    await storage.updateProduct(product.id, { ownerId: user.id, ...filledFields });
+    await storage.updateProduct(product.id, { ownerId: user.id, ...validatedFields.data });
 
     // 3) Add to product owners blockchain
     console.log("Adding product owner");
@@ -811,7 +863,7 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
         previousOwnerName: previousOwner?.username || previousOwner?.name || "Unknown", // Use username if available
         previousOwnerRole: previousOwner?.role || "Unknown",
         registeredFields: registeredFields,
-        ...filledFields
+        ...validatedFields.data
       }
     );
 
