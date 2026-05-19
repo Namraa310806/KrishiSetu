@@ -9,6 +9,8 @@ import { useEffect, useState } from "react";
 import { toast } from "react-hot-toast";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
+import EmptyState from "@/components/ui/EmptyState";
+
 
 interface Owner {
   id: string;
@@ -203,9 +205,10 @@ const filteredProducts =
           </div>
         )}
         {!isLoading && !isError && products?.length === 0 && !searchQuery && (
-          <div className="bg-muted p-4 rounded-lg text-center text-muted-foreground">
-            No products registered yet.
-          </div>
+          <EmptyState
+          title="No products found"
+           description="Products you register will appear here."
+          />
         )}
         <div className="space-y-6">
           {filteredProducts.map((product) => {
@@ -324,7 +327,7 @@ const filteredProducts =
                     {/* Action Buttons */}
                     <div className="flex gap-2 mt-4">
                       <Link href={`/product/${product.id}?from=registered-products`}>
-                        <Button size="sm" variant="outline">
+                        <Button size="sm" variant="outline" className="primary-btn">
                           View Details
                         </Button>
                       </Link>
@@ -333,13 +336,13 @@ const filteredProducts =
                           {editingProductId === product.id ? (
                             <>
                               <button
-                                className="px-3 py-1 rounded bg-green-600 text-white hover:bg-green-700"
+                               className="primary-btn bg-green-600 text-white hover:bg-green-700"
                                 onClick={() => handleEditSave(product.id)}
                               >
                                 Save
                               </button>
                               <button
-                                className="px-3 py-1 rounded bg-gray-400 text-white hover:bg-gray-500"
+                                className="primary-btn bg-gray-400 text-white hover:bg-gray-500"
                                 onClick={() => setEditingProductId(null)}
                               >
                                 Cancel
@@ -347,7 +350,7 @@ const filteredProducts =
                             </>
                           ) : (
                             <button
-                              className="px-3 py-1 rounded bg-yellow-500 text-white hover:bg-yellow-600"
+                              className="primary-btn bg-yellow-500 text-white hover:bg-yellow-600"
                               onClick={() => handleEdit(product)}
                             >
                               Edit
