@@ -1,4 +1,4 @@
-import express, { Express, Request, Response, NextFunction } from "express";
+git add server/routes.ts package.json package-lock.jsonimport express, { Express, Request, Response, NextFunction } from "express";
 import { createServer } from "http";
 import { MongoStorage, getDb } from "./storage";
 import { z } from "zod";
@@ -51,7 +51,7 @@ const upload = multer({
 const uploadDir = path.join(__dirname, "../uploads/payment-proofs");
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
-  console.log("Created upload directory:", uploadDir);
+
 }
 
 const allowedUserUpdateFields = new Set([
