@@ -13,12 +13,14 @@ import { Bell, Sprout, ChevronDown, LogOut, User, Menu } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
 
+
 // IMPORT your form components (update paths if needed)
 import { DistributorProductForm } from "./DistributorProductForm";
 import { RetailerProductForm } from "./RetailerProductForm";
 import { OwnershipManagementPanel } from "./OwnershipManagementPanel"; // Import at the top
-
+import { useTheme } from "next-themes"
 export function NavigationHeader() {
+  const { theme, setTheme } = useTheme()
   const [location, setLocation] = useLocation();
   const { user, firebaseUser, logout, loading } = useAuth();
   const { toast } = useToast();
@@ -127,9 +129,14 @@ export function NavigationHeader() {
 
   if (loading) {
     return (
+
       <nav className="bg-card border-b border-border sticky top-0 z-50 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+
           <div className="flex justify-center h-16 items-center">
+          <div className="flex items-center gap-4">
+
+          </div>
             <div className="animate-pulse">KrishiSetu...</div>
           </div>
         </div>
@@ -397,11 +404,19 @@ export function NavigationHeader() {
 
   return (
     <>
+   
       <nav className="bg-card border-b border-border sticky top-0 z-50 shadow-sm w-full">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-wrap justify-between items-center h-16 gap-2">
             {/* Left: Logo + nav links */}
             <div className="flex flex-wrap items-center gap-4 flex-grow min-w-0">
+              <button
+                  onClick={() =>
+                      setTheme(theme === "dark" ? "light" : "dark")
+                        }
+>
+                        {theme === "dark" ? "☀️" : "🌙"}
+                  </button>
               <div className="flex-shrink-0">
                 <h1
                   className="text-2xl font-bold text-primary flex items-center gap-2 cursor-pointer hover:opacity-80"
