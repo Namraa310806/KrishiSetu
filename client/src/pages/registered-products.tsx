@@ -6,6 +6,7 @@ import { QRCodeGenerator } from "@/components/QRCodeGenerator";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import EmptyState from "@/components/ui/EmptyState";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/hooks/useAuth";
 import { useProducts } from "@/hooks/useProducts";
@@ -25,6 +26,18 @@ export default function RegisteredProductsPage() {
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [editData, setEditData] = useState<any>({});
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState("");
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Fetch owners for each product
   useEffect(() => {
@@ -86,14 +99,21 @@ export default function RegisteredProductsPage() {
 
   const filteredProducts =
     products?.filter((product) => {
-      const query = searchQuery.toLowerCase();
-      return (
+      const query = debouncedSearch.toLowerCase();
+
+      const matchesSearch =
         product.name.toLowerCase().includes(query) ||
         product.category.toLowerCase().includes(query) ||
-        product.farmName.toLowerCase().includes(query)
-      );
-    }) || [];
+        product.farmName.toLowerCase().includes(query);
 
+      const matchesCategory =
+        !selectedCategory || product.category === selectedCategory;
+
+      const matchesStatus =
+        !selectedStatus || product.status.toLowerCase() === selectedStatus;
+
+      return matchesSearch && matchesCategory && matchesStatus;
+    }) || [];
   return (
     <>
       <NavigationHeader />
@@ -114,6 +134,42 @@ export default function RegisteredProductsPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
+          <div className="flex flex-col md:flex-row gap-4 mb-4 pt-4">
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="border rounded-lg px-4 py-2 bg-background"
+            >
+              <option value="">All Categories</option>
+              {[...new Set(products?.map((p) => p.category))].map(
+                (category: string) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ),
+              )}
+            </select>
+
+            <select
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="border rounded-lg px-4 py-2 bg-background"
+            >
+              <option value="">All Status</option>
+              <option value="verified">Verified</option>
+              <option value="pending">Pending</option>
+            </select>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearchQuery("");
+                setSelectedCategory("");
+                setSelectedStatus("");
+              }}
+            >
+              Clear Filters
+            </Button>
+          </div>
         </div>
         {isLoading && (
           <div className="text-center text-muted-foreground">
@@ -125,18 +181,33 @@ export default function RegisteredProductsPage() {
             Failed to load products.
           </div>
         )}
-        {!isLoading &&
-          !isError &&
-          filteredProducts.length === 0 &&
-          searchQuery && (
-            <div className="bg-muted p-4 rounded-lg text-center text-muted-foreground">
-              No products match your search.
-            </div>
-          )}
-        {!isLoading && !isError && products?.length === 0 && !searchQuery && (
-          <div className="bg-muted p-4 rounded-lg text-center text-muted-foreground">
-            No products registered yet.
+        {!isLoading && !isError && filteredProducts.length === 0 && (
+          <div className="bg-muted p-8 rounded-lg text-center">
+            <h3 className="text-lg font-semibold mb-2">
+              No matching results found
+            </h3>
+
+            <p className="text-muted-foreground mb-4">
+              Try adjusting your search or filters.
+            </p>
+
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearchQuery("");
+                setSelectedCategory("");
+                setSelectedStatus("");
+              }}
+            >
+              Reset Filters
+            </Button>
           </div>
+        )}
+        {!isLoading && !isError && products?.length === 0 && !searchQuery && (
+          <EmptyState
+            title="No products found"
+            description="Products you register will appear here."
+          />
         )}
         <div className="space-y-6">
           {filteredProducts.map((product) => {

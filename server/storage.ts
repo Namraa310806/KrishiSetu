@@ -1,4 +1,4 @@
-import type {
+import {
   InsertNotification,
   InsertOwnershipTransfer,
   InsertProduct,
@@ -20,7 +20,7 @@ import type {
 } from "@shared/schema";
 import { createHash, randomUUID } from "crypto";
 import { config } from "dotenv";
-import { type Db, MongoClient } from "mongodb";
+import { Db, MongoClient } from "mongodb";
 
 config();
 
@@ -204,7 +204,7 @@ export class MongoStorage {
 
   async countTransfers(): Promise<number> {
     const db = await getDb();
-    return await db.collection("ownershipTransfers").countDocuments();
+    return await db.collection("ownershiptransfers").countDocuments();
   }
 
   async getRecentScans(limit: number = 5): Promise<any[]> {

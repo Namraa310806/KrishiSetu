@@ -9,7 +9,7 @@ import {
   insertTransactionSchema,
   insertUserSchema,
 } from "@shared/schema";
-import express, { type Express, type Request, type Response } from "express";
+import express, { Express, NextFunction, Request, Response } from "express";
 import fs from "fs";
 import { createServer } from "http";
 import multer from "multer";
@@ -17,6 +17,7 @@ import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 import { z } from "zod";
 import { analyzeProductQuality, improveGrammar, translateText } from "./ai";
+import { verifyFirebaseIdToken } from "./firebaseJwt";
 import { getDb, MongoStorage } from "./storage";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,104 +58,164 @@ if (!fs.existsSync(uploadDir)) {
   console.log("Created upload directory:", uploadDir);
 }
 
+const allowedUserUpdateFields = new Set([
+  "name",
+  "profileImage",
+  "phone",
+  "company",
+  "location",
+  "bio",
+  "website",
+  "language",
+  "notificationsEnabled",
+]);
+
+const filterUserUpdates = (payload: Record<string, unknown>) => {
+  const updates: Record<string, unknown> = {};
+  for (const field of allowedUserUpdateFields) {
+    if (payload[field] !== undefined) {
+      updates[field] = payload[field];
+    }
+  }
+  return updates;
+};
+
+const getBearerToken = (req: Request) => {
+  const authHeader = req.header("authorization") || "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : null;
+};
+
+const requireFirebaseAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const token = getBearerToken(req);
+  if (!token) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
+  try {
+    const decoded = await verifyFirebaseIdToken(token);
+    const headerUid =
+      req.header("firebase-uid") || req.header("x-firebase-uid");
+    if (headerUid && headerUid !== decoded.uid) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    res.locals.firebaseUid = decoded.uid;
+    return next();
+  } catch (error) {
+    console.error("Auth token verification failed:", error);
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+};
+
 export async function registerRoutes(app: Express) {
   app.use(
     "/uploads/payment-proofs",
     express.static(path.join(__dirname, "../uploads/payment-proofs")),
   );
   // --- Authentication Routes ---
-  app.post("/api/user/register", async (req: Request, res: Response) => {
-    try {
-      const { email, name, firebaseUid, profileImage, roleSelected } = req.body;
+  app.post(
+    "/api/user/register",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const { email, name, firebaseUid, profileImage, roleSelected } =
+          req.body;
+        const authFirebaseUid = res.locals.firebaseUid as string;
 
-      // Validate required fields
-      if (!email || !name || !firebaseUid) {
-        return res.status(400).json({ message: "Missing required fields" });
+        // Validate required fields
+        if (!email || !name) {
+          return res.status(400).json({ message: "Missing required fields" });
+        }
+
+        if (firebaseUid && firebaseUid !== authFirebaseUid) {
+          return res.status(401).json({ message: "Unauthorized" });
+        }
+
+        // Check if user already exists
+        const existingUser =
+          await storage.getUserByFirebaseUid(authFirebaseUid);
+
+        if (existingUser) {
+          return res.json(existingUser); // Return existing user if already registered
+        }
+
+        // Create new user with username derived from email
+        const username = email.split("@")[0] + Math.floor(Math.random() * 1000);
+
+        const user = await storage.createUser({
+          email,
+          name,
+          username,
+          role: "farmer", // default role
+          firebaseUid: authFirebaseUid,
+          profileImage,
+          roleSelected: roleSelected || false,
+          language: "en",
+          notificationsEnabled: true,
+        });
+
+        return res.status(201).json(user);
+      } catch (error) {
+        console.error("Error registering user:", error);
+        return res.status(500).json({ message: "Failed to register user" });
       }
-
-      // Check if user already exists
-      const existingUser = await storage.getUserByFirebaseUid(firebaseUid);
-
-      if (existingUser) {
-        return res.json(existingUser); // Return existing user if already registered
-      }
-
-      // Create new user with username derived from email
-      const username = email.split("@")[0] + Math.floor(Math.random() * 1000);
-
-      const user = await storage.createUser({
-        email,
-        name,
-        username,
-        role: "farmer", // default role
-        firebaseUid,
-        profileImage,
-        roleSelected: roleSelected || false,
-        language: "en",
-        notificationsEnabled: true,
-      });
-
-      return res.status(201).json(user);
-    } catch (error) {
-      console.error("Error registering user:", error);
-      return res.status(500).json({ message: "Failed to register user" });
-    }
-  });
+    },
+  );
 
   // Get user profile
-  app.get("/api/user/profile", async (req: Request, res: Response) => {
-    try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
+  app.get(
+    "/api/user/profile",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const firebaseUid = res.locals.firebaseUid as string;
+        const user = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
 
-      const user = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
+        return res.json(user);
+      } catch (error) {
+        console.error("Error fetching user profile:", error);
+        return res
+          .status(500)
+          .json({ message: "Failed to fetch user profile" });
       }
-
-      return res.json(user);
-    } catch (error) {
-      console.error("Error fetching user profile:", error);
-      return res.status(500).json({ message: "Failed to fetch user profile" });
-    }
-  });
+    },
+  );
 
   // Update user profile
-  app.put("/api/user/profile", async (req: Request, res: Response) => {
+  app.put(
+    "/api/user/profile",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const firebaseUid = res.locals.firebaseUid as string;
+        const user = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const updates = filterUserUpdates(req.body || {});
+        if (Object.keys(updates).length === 0) {
+          return res.status(400).json({ message: "No valid fields to update" });
+        }
+
+        const updatedUser = await storage.updateUser(user.id, updates);
+        return res.json(updatedUser);
+      } catch (error) {
+        console.error("Error updating user profile:", error);
+        return res.status(500).json({ message: "Failed to update profile" });
+      }
+    },
+  );
+  app.get("/api/users/search", requireFirebaseAuth, async (req, res) => {
     try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-
-      const user = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      const updates = req.body;
-      // Ensure certain fields cannot be changed
-      delete updates.firebaseUid;
-      delete updates.id;
-
-      const updatedUser = await storage.updateUser(user.id, updates);
-      return res.json(updatedUser);
-    } catch (error) {
-      console.error("Error updating user profile:", error);
-      return res.status(500).json({ message: "Failed to update profile" });
-    }
-  });
-  app.get("/api/users/search", async (req, res) => {
-    try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
+      const firebaseUid = res.locals.firebaseUid as string;
       const currentUser = await storage.getUserByFirebaseUid(firebaseUid);
       if (!currentUser) {
         return res.status(404).json({ message: "User not found" });
@@ -186,137 +247,136 @@ export async function registerRoutes(app: Express) {
     if (!user) return res.status(404).json({ message: "User not found" });
     return res.json(user);
   });
-  app.patch("/api/users/:id", async (req: Request, res: Response) => {
-    try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
+  app.patch(
+    "/api/users/:id",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const firebaseUid = res.locals.firebaseUid as string;
+
+        const { id } = req.params;
+        const userToUpdate = await storage.getUser(id);
+        if (!userToUpdate) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        // Check if the authenticated user is the same as the user being updated
+        if (userToUpdate.firebaseUid !== firebaseUid) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+
+        const updates = filterUserUpdates(req.body || {});
+        if (Object.keys(updates).length === 0) {
+          return res.status(400).json({ message: "No valid fields to update" });
+        }
+
+        const updatedUser = await storage.updateUser(id, updates);
+        return res.json(updatedUser);
+      } catch (error) {
+        console.error("Error updating user:", error);
+        return res.status(500).json({ message: "Failed to update user" });
       }
-
-      const { id } = req.params;
-      const userToUpdate = await storage.getUser(id);
-      if (!userToUpdate) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Check if the authenticated user is the same as the user being updated
-      if (userToUpdate.firebaseUid !== firebaseUid) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-
-      const updates = req.body;
-      // Remove protected fields
-      delete updates.firebaseUid;
-      delete updates.id;
-
-      const updatedUser = await storage.updateUser(id, updates);
-      return res.json(updatedUser);
-    } catch (error) {
-      console.error("Error updating user:", error);
-      return res.status(500).json({ message: "Failed to update user" });
-    }
-  });
+    },
+  );
 
   // --- Product Routes ---
-  app.post("/api/products", async (req: Request, res: Response) => {
-    try {
-      const parse = insertProductSchema.safeParse(req.body);
-      if (!parse.success) {
-        return res.status(400).json({
-          message: "Invalid product data",
-          errors: parse.error.format(),
+  app.post(
+    "/api/products",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const parse = insertProductSchema.safeParse(req.body);
+        if (!parse.success) {
+          return res.status(400).json({
+            message: "Invalid product data",
+            errors: parse.error.format(),
+          });
+        }
+
+        const firebaseUid = res.locals.firebaseUid as string;
+        const user = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const productData = {
+          ...parse.data,
+          ownerId: user.id,
+        };
+        const product = await storage.createProduct(productData);
+
+        await storage.addProductOwner({
+          productId: product.id,
+          ownerId: user.id,
+          username: user.username,
+          name: user.name,
+          addedBy: user.id,
+          role: user.role,
+          canEditFields: [
+            "quantity",
+            "location",
+            "description",
+            "certifications",
+            "price",
+          ],
+          transferType: "initial",
+          createdAt: new Date(),
         });
+
+        return res.status(201).json(product);
+      } catch (error) {
+        console.error("Error creating product:", error);
+        return res.status(500).json({ message: "Failed to create product" });
       }
-
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-
-      const user = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      const productData = {
-        ...parse.data,
-        ownerId: user.id,
-      };
-      const product = await storage.createProduct(productData);
-
-      await storage.addProductOwner({
-        productId: product.id,
-        ownerId: user.id,
-        username: user.username,
-        name: user.name,
-        addedBy: user.id,
-        role: user.role,
-        canEditFields: [
-          "quantity",
-          "location",
-          "description",
-          "certifications",
-          "price",
-        ],
-        transferType: "initial",
-        createdAt: new Date(),
-      });
-
-      return res.status(201).json(product);
-    } catch (error) {
-      console.error("Error creating product:", error);
-      return res.status(500).json({ message: "Failed to create product" });
-    }
-  });
+    },
+  );
 
   //All products search
-  app.get("/api/products/available/search", async (req, res) => {
-    try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        console.log("No firebase-uid header found:", req.headers);
-        return res.status(401).json({ message: "Unauthorized" });
+  app.get(
+    "/api/products/available/search",
+    requireFirebaseAuth,
+    async (req, res) => {
+      try {
+        const firebaseUid = res.locals.firebaseUid as string;
+        console.log("Received search request with firebase-uid:", firebaseUid);
+        const currentUser = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!currentUser) {
+          console.log("User not found for uid:", firebaseUid);
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const q = (req.query.q as string)?.toLowerCase() || "";
+        console.log("Searching for products with query:", q);
+
+        const db = await getDb();
+        if (!db) {
+          return res
+            .status(500)
+            .json({ message: "Database connection failed" });
+        }
+
+        const products = await db
+          .collection("products")
+          .find({
+            ownerId: { $ne: currentUser.id },
+            $or: [
+              { name: { $regex: q, $options: "i" } },
+              { category: { $regex: q, $options: "i" } },
+              { farmName: { $regex: q, $options: "i" } },
+              { batchId: { $regex: q, $options: "i" } },
+            ],
+          })
+          .toArray();
+
+        console.log("Returning products count:", products.length);
+        res.setHeader("Content-Type", "application/json");
+        return res.status(200).json(products || []);
+      } catch (error) {
+        console.error("Error searching available products:", error);
+        return res.status(500).json({ message: "Failed to search products" });
       }
-
-      console.log("Received search request with firebase-uid:", firebaseUid);
-      const currentUser = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!currentUser) {
-        console.log("User not found for uid:", firebaseUid);
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      const q = (req.query.q as string)?.toLowerCase() || "";
-      console.log("Searching for products with query:", q);
-
-      const db = await getDb();
-      if (!db) {
-        return res.status(500).json({ message: "Database connection failed" });
-      }
-
-      const products = await db
-        .collection("products")
-        .find({
-          ownerId: { $ne: currentUser.id },
-          $or: [
-            { name: { $regex: q, $options: "i" } },
-            { category: { $regex: q, $options: "i" } },
-            { farmName: { $regex: q, $options: "i" } },
-            { batchId: { $regex: q, $options: "i" } },
-          ],
-        })
-        .toArray();
-
-      console.log("Returning products count:", products.length);
-      res.setHeader("Content-Type", "application/json");
-      return res.status(200).json(products || []);
-    } catch (error) {
-      console.error("Error searching available products:", error);
-      return res.status(500).json({ message: "Failed to search products" });
-    }
-  });
+    },
+  );
 
   app.get("/api/products/:id", async (req: Request, res: Response) => {
     const product = await storage.getProduct(req.params.id);
@@ -347,74 +407,73 @@ export async function registerRoutes(app: Express) {
   });
 
   // Get user's owned products
-  app.get("/api/user/products/owned", async (req: Request, res: Response) => {
-    try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
+  app.get(
+    "/api/user/products/owned",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const firebaseUid = res.locals.firebaseUid as string;
+        const user = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+        const query = req.query.q as string | undefined;
+        let products;
+        if (query && query.trim()) {
+          products = await storage.searchProductsByOwner(user.id, query);
+        } else {
+          products = await storage.getProductsByOwner(user.id);
+        }
+        return res.json(products);
+      } catch (error) {
+        console.error("Error fetching owned products:", error);
+        return res
+          .status(500)
+          .json({ message: "Failed to fetch owned products" });
       }
-      const user = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      const query = req.query.q as string | undefined;
-      let products;
-      if (query && query.trim()) {
-        products = await storage.searchProductsByOwner(user.id, query);
-      } else {
-        products = await storage.getProductsByOwner(user.id);
-      }
-      return res.json(products);
-    } catch (error) {
-      console.error("Error fetching owned products:", error);
-      return res
-        .status(500)
-        .json({ message: "Failed to fetch owned products" });
-    }
-  });
+    },
+  );
 
   // Get user's scanned products
-  app.get("/api/user/products/scanned", async (req: Request, res: Response) => {
-    try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-
-      const user = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Get all scans for this user
-      const scans = await storage.getUserScans(user.id);
-
-      // Use ES5 object for unique product IDs to avoid Set/ES2015 error
-      const productIdMap: Record<string, boolean> = {};
-      for (const scan of scans) {
-        if (scan.productId) productIdMap[scan.productId] = true;
-      }
-      const productIds = Object.keys(productIdMap);
-
-      // Fetch product details for each scanned product
-      const products = [];
-      for (const productId of productIds) {
-        const product = await storage.getProduct(productId);
-        if (product) {
-          products.push(product);
+  app.get(
+    "/api/user/products/scanned",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const firebaseUid = res.locals.firebaseUid as string;
+        const user = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
         }
-      }
 
-      return res.json(products);
-    } catch (error) {
-      console.error("Error fetching scanned products:", error);
-      return res
-        .status(500)
-        .json({ message: "Failed to fetch scanned products" });
-    }
-  });
+        // Get all scans for this user
+        const scans = await storage.getUserScans(user.id);
+
+        // Use ES5 object for unique product IDs to avoid Set/ES2015 error
+        const productIdMap: Record<string, boolean> = {};
+        for (const scan of scans) {
+          if (scan.productId) productIdMap[scan.productId] = true;
+        }
+        const productIds = Object.keys(productIdMap);
+
+        // Fetch product details for each scanned product
+        const products = [];
+        for (const productId of productIds) {
+          const product = await storage.getProduct(productId);
+          if (product) {
+            products.push(product);
+          }
+        }
+
+        return res.json(products);
+      } catch (error) {
+        console.error("Error fetching scanned products:", error);
+        return res
+          .status(500)
+          .json({ message: "Failed to fetch scanned products" });
+      }
+    },
+  );
 
   app.get(
     "/api/products/batch/:batchId",
@@ -486,226 +545,228 @@ export async function registerRoutes(app: Express) {
   });
 
   // --- Ownership Transfer Routes ---
-  app.post("/api/ownership-transfers", async (req: Request, res: Response) => {
-    try {
-      console.log("HIT /api/ownership-transfers ENDPOINT!");
+  app.post(
+    "/api/ownership-transfers",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        console.log("HIT /api/ownership-transfers ENDPOINT!");
 
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        console.log("[OWNERSHIP REQUEST] No firebase-uid header found");
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-
-      const currentUser = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!currentUser) {
-        console.log(
-          "[OWNERSHIP REQUEST] User not found for firebaseUid:",
-          firebaseUid,
-        );
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      // Validate required fields manually since we're not using the full schema
-      const productId = req.body.productId;
-      const transferType = req.body.transferType;
-      const notes = req.body.notes;
-      const toUserId = req.body.toUserId;
-
-      console.log("[OWNERSHIP REQUEST] Raw req.body:", req.body);
-      console.log(
-        "[OWNERSHIP REQUEST] Direct access - toUserId:",
-        req.body.toUserId,
-      );
-      console.log(
-        "[OWNERSHIP REQUEST] Direct access - productId:",
-        req.body.productId,
-      );
-      console.log(
-        "[OWNERSHIP REQUEST] Direct access - transferType:",
-        req.body.transferType,
-      );
-      console.log("[OWNERSHIP REQUEST] Direct access - notes:", req.body.notes);
-
-      if (!productId) {
-        console.log("[OWNERSHIP REQUEST] Product ID is missing");
-        return res.status(400).json({ message: "Product ID is required" });
-      }
-
-      const product = await storage.getProduct(productId);
-      if (!product) {
-        return res.status(404).json({ message: "Product not found" });
-      }
-
-      let recipientUserId: string;
-      let isOwnerTransfer = false;
-
-      // Determine the scenario based on whether current user owns the product
-      if (product.ownerId === currentUser.id) {
-        // Current user is the product owner - this is an owner-initiated transfer
-        if (!toUserId) {
-          return res.status(400).json({
-            message: "toUserId is required for owner-initiated transfers",
-          });
+        const firebaseUid = res.locals.firebaseUid as string;
+        const currentUser = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!currentUser) {
+          console.log(
+            "[OWNERSHIP REQUEST] User not found for firebaseUid:",
+            firebaseUid,
+          );
+          return res.status(404).json({ message: "User not found" });
         }
-        recipientUserId = toUserId;
-        isOwnerTransfer = true;
+
+        // Validate required fields manually since we're not using the full schema
+        const productId = req.body.productId;
+        const transferType = req.body.transferType;
+        const notes = req.body.notes;
+        const toUserId = req.body.toUserId;
+
+        console.log("[OWNERSHIP REQUEST] Raw req.body:", req.body);
         console.log(
-          "[OWNERSHIP REQUEST] Owner-initiated transfer to:",
-          recipientUserId,
+          "[OWNERSHIP REQUEST] Direct access - toUserId:",
+          req.body.toUserId,
         );
-      } else {
-        // Current user is not the product owner - this is a consumer request
-        recipientUserId = product.ownerId;
         console.log(
-          "[OWNERSHIP REQUEST] Consumer request to product owner:",
-          recipientUserId,
+          "[OWNERSHIP REQUEST] Direct access - productId:",
+          req.body.productId,
         );
-      }
+        console.log(
+          "[OWNERSHIP REQUEST] Direct access - transferType:",
+          req.body.transferType,
+        );
+        console.log(
+          "[OWNERSHIP REQUEST] Direct access - notes:",
+          req.body.notes,
+        );
 
-      // Prevent self-transfer
-      if (recipientUserId === currentUser.id) {
+        if (!productId) {
+          console.log("[OWNERSHIP REQUEST] Product ID is missing");
+          return res.status(400).json({ message: "Product ID is required" });
+        }
+
+        const product = await storage.getProduct(productId);
+        if (!product) {
+          return res.status(404).json({ message: "Product not found" });
+        }
+
+        let recipientUserId: string;
+        let isOwnerTransfer = false;
+
+        // Determine the scenario based on whether current user owns the product
+        if (product.ownerId === currentUser.id) {
+          // Current user is the product owner - this is an owner-initiated transfer
+          if (!toUserId) {
+            return res.status(400).json({
+              message: "toUserId is required for owner-initiated transfers",
+            });
+          }
+          recipientUserId = toUserId;
+          isOwnerTransfer = true;
+          console.log(
+            "[OWNERSHIP REQUEST] Owner-initiated transfer to:",
+            recipientUserId,
+          );
+        } else {
+          // Current user is not the product owner - this is a consumer request
+          recipientUserId = product.ownerId;
+          console.log(
+            "[OWNERSHIP REQUEST] Consumer request to product owner:",
+            recipientUserId,
+          );
+        }
+
+        // Prevent self-transfer
+        if (recipientUserId === currentUser.id) {
+          return res
+            .status(400)
+            .json({ message: "Cannot transfer ownership to yourself" });
+        }
+
+        // Validate recipient exists
+        const recipientUser = await storage.getUser(recipientUserId);
+        if (!recipientUser) {
+          return res.status(404).json({ message: "Recipient user not found" });
+        }
+
+        // Create a pending transfer
+        const transfer = await storage.createOwnershipTransfer({
+          productId,
+          fromUserId: currentUser.id, // Requester (current user)
+          toUserId: recipientUserId, // Use recipientUserId determined above
+          transferType: transferType || "request",
+          notes: notes || null,
+          status: "pending",
+        });
+
+        console.log(
+          `[OWNERSHIP REQUEST] Requester: ${currentUser.name} (${currentUser.id}) -> Owner: ${product.ownerId}`,
+        );
+
+        // Create notification for the recipient
+        await storage.createNotification({
+          userId: recipientUserId, // Send to the determined recipient
+          title: "Product Ownership Request",
+          message: `${currentUser.name} sent an ownership transfer request for ${product.name} to you.`,
+          type: "ownership_request",
+          productId: product.id,
+          transferId: transfer.id,
+          fromUserId: currentUser.id,
+          read: false,
+          createdAt: new Date(),
+        });
+
+        // DEBUG: Log notification recipients
+        console.log(
+          `Notification sent to userId: ${recipientUserId} for product: ${product.name}`,
+        );
+
+        console.log(
+          `[NOTIFICATION CREATED] Sent to user: ${recipientUserId} for product: ${product.name}`,
+        );
+
+        await storage.logProductEvent(
+          product.id,
+          "ownership_request",
+          `${currentUser.name} requested ownership.`,
+          currentUser.id,
+          { transferId: transfer.id },
+        );
+
+        return res.status(201).json({
+          message: "Transfer request sent. Waiting for acceptance.",
+          transferId: transfer.id,
+        });
+      } catch (error) {
+        console.error("Error transferring ownership:", error);
         return res
-          .status(400)
-          .json({ message: "Cannot transfer ownership to yourself" });
+          .status(500)
+          .json({ message: "Failed to transfer ownership" });
       }
+    },
+  );
 
-      // Validate recipient exists
-      const recipientUser = await storage.getUser(recipientUserId);
-      if (!recipientUser) {
-        return res.status(404).json({ message: "Recipient user not found" });
+  app.post(
+    "/api/request-product",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        console.log("HIT /api/request-product ENDPOINT!");
+
+        const firebaseUid = res.locals.firebaseUid as string;
+        const requester = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!requester) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const { productId, transferType, notes } = req.body;
+        if (!productId) {
+          return res.status(400).json({ message: "Product ID is required" });
+        }
+
+        const product = await storage.getProduct(productId);
+        if (!product) {
+          return res.status(404).json({ message: "Product not found" });
+        }
+
+        // Prevent requesting your own product
+        if (product.ownerId === requester.id) {
+          return res
+            .status(400)
+            .json({ message: "You already own this product" });
+        }
+
+        // Create a pending ownership transfer (from requester to owner)
+        const transfer = await storage.createOwnershipTransfer({
+          productId,
+          fromUserId: requester.id,
+          toUserId: product.ownerId,
+          transferType: transferType || "request",
+          notes: notes || null,
+          status: "pending",
+        });
+
+        // Log notification before creating it
+        console.log("Creating notification with type:", "product_request");
+
+        // Notify the product owner
+        await storage.createNotification({
+          userId: product.ownerId,
+          title: "Product Ownership Request",
+          message: `${requester.name} requested ownership of ${product.name}.`,
+          type: "product_request",
+          productId: product.id,
+          transferId: transfer.id,
+          fromUserId: requester.id,
+          read: false,
+          createdAt: new Date(),
+        });
+
+        // Optionally log the event
+        await storage.logProductEvent(
+          product.id,
+          "ownership_request",
+          `${requester.name} requested ownership.`,
+          requester.id,
+          { transferId: transfer.id },
+        );
+
+        return res.status(201).json({
+          message: "Ownership request sent. Waiting for acceptance.",
+          transferId: transfer.id,
+        });
+      } catch (error) {
+        console.error("Error in /api/request-product:", error);
+        return res.status(500).json({ message: "Failed to request product" });
       }
-
-      // Create a pending transfer
-      const transfer = await storage.createOwnershipTransfer({
-        productId,
-        fromUserId: currentUser.id, // Requester (current user)
-        toUserId: recipientUserId, // Use recipientUserId determined above
-        transferType: transferType || "request",
-        notes: notes || null,
-        status: "pending",
-      });
-
-      console.log(
-        `[OWNERSHIP REQUEST] Requester: ${currentUser.name} (${currentUser.id}) -> Owner: ${product.ownerId}`,
-      );
-
-      // Create notification for the recipient
-      await storage.createNotification({
-        userId: recipientUserId, // Send to the determined recipient
-        title: "Product Ownership Request",
-        message: `${currentUser.name} sent an ownership transfer request for ${product.name} to you.`,
-        type: "ownership_request",
-        productId: product.id,
-        transferId: transfer.id,
-        fromUserId: currentUser.id,
-        read: false,
-        createdAt: new Date(),
-      });
-
-      // DEBUG: Log notification recipients
-      console.log(
-        `Notification sent to userId: ${recipientUserId} for product: ${product.name}`,
-      );
-
-      console.log(
-        `[NOTIFICATION CREATED] Sent to user: ${recipientUserId} for product: ${product.name}`,
-      );
-
-      await storage.logProductEvent(
-        product.id,
-        "ownership_request",
-        `${currentUser.name} requested ownership.`,
-        currentUser.id,
-        { transferId: transfer.id },
-      );
-
-      return res.status(201).json({
-        message: "Transfer request sent. Waiting for acceptance.",
-        transferId: transfer.id,
-      });
-    } catch (error) {
-      console.error("Error transferring ownership:", error);
-      return res.status(500).json({ message: "Failed to transfer ownership" });
-    }
-  });
-
-  app.post("/api/request-product", async (req: Request, res: Response) => {
-    try {
-      console.log("HIT /api/request-product ENDPOINT!");
-
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
-
-      const requester = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!requester) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      const { productId, transferType, notes } = req.body;
-      if (!productId) {
-        return res.status(400).json({ message: "Product ID is required" });
-      }
-
-      const product = await storage.getProduct(productId);
-      if (!product) {
-        return res.status(404).json({ message: "Product not found" });
-      }
-
-      // Prevent requesting your own product
-      if (product.ownerId === requester.id) {
-        return res
-          .status(400)
-          .json({ message: "You already own this product" });
-      }
-
-      // Create a pending ownership transfer (from requester to owner)
-      const transfer = await storage.createOwnershipTransfer({
-        productId,
-        fromUserId: requester.id,
-        toUserId: product.ownerId,
-        transferType: transferType || "request",
-        notes: notes || null,
-        status: "pending",
-      });
-
-      // Log notification before creating it
-      console.log("Creating notification with type:", "product_request");
-
-      // Notify the product owner
-      await storage.createNotification({
-        userId: product.ownerId,
-        title: "Product Ownership Request",
-        message: `${requester.name} requested ownership of ${product.name}.`,
-        type: "product_request",
-        productId: product.id,
-        transferId: transfer.id,
-        fromUserId: requester.id,
-        read: false,
-        createdAt: new Date(),
-      });
-
-      // Optionally log the event
-      await storage.logProductEvent(
-        product.id,
-        "ownership_request",
-        `${requester.name} requested ownership.`,
-        requester.id,
-        { transferId: transfer.id },
-      );
-
-      return res.status(201).json({
-        message: "Ownership request sent. Waiting for acceptance.",
-        transferId: transfer.id,
-      });
-    } catch (error) {
-      console.error("Error in /api/request-product:", error);
-      return res.status(500).json({ message: "Failed to request product" });
-    }
-  });
+    },
+  );
 
   // server/routes/ownershipTransfers.ts
 
@@ -713,16 +774,16 @@ export async function registerRoutes(app: Express) {
    * Accept an ownership transfer AND optionally update/register product data.
    * Expects:
    *  - transferId in params
-   *  - headers: firebase-uid (or x-firebase-uid)
+   *  - headers: Authorization: Bearer <Firebase ID token>
    *  - body: { productData?: {...}, productId?: string }
    */
   app.put(
     "/api/ownership-transfers/:id/accept",
+    requireFirebaseAuth,
     upload.single("paymentProof"),
     async (req: Request, res: Response) => {
       const transferId = req.params.id;
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
+      const firebaseUid = res.locals.firebaseUid as string;
 
       console.log("Accept ownership transfer called");
       console.log("transferId:", transferId);
@@ -730,11 +791,6 @@ export async function registerRoutes(app: Express) {
       console.log("req.headers:", req.headers);
       console.log("req.body:", req.body);
       console.log("req.file:", req.file);
-
-      if (!firebaseUid) {
-        console.log("No firebaseUid");
-        return res.status(401).json({ message: "Unauthorized" });
-      }
 
       // Extract all form data
       const formData = { ...req.body };
@@ -989,16 +1045,11 @@ export async function registerRoutes(app: Express) {
 
   app.put(
     "/api/ownership-transfers/:id/reject",
+    requireFirebaseAuth,
     async (req: Request, res: Response) => {
       try {
         const transferId = req.params.id;
-        const firebaseUid =
-          req.header("firebase-uid") || req.header("x-firebase-uid");
-
-        if (!firebaseUid) {
-          return res.status(401).json({ message: "Unauthorized" });
-        }
-
+        const firebaseUid = res.locals.firebaseUid as string;
         const user = await storage.getUserByFirebaseUid(firebaseUid);
         if (!user) {
           return res.status(404).json({ message: "User not found" });
@@ -1054,14 +1105,10 @@ export async function registerRoutes(app: Express) {
   // Get pending transfer requests for user
   app.get(
     "/api/ownership-transfers/pending",
+    requireFirebaseAuth,
     async (req: Request, res: Response) => {
       try {
-        const firebaseUid =
-          req.header("firebase-uid") || req.header("x-firebase-uid");
-        if (!firebaseUid) {
-          return res.status(401).json({ message: "Unauthorized" });
-        }
-
+        const firebaseUid = res.locals.firebaseUid as string;
         const user = await storage.getUserByFirebaseUid(firebaseUid);
         if (!user) {
           return res.status(404).json({ message: "User not found" });
@@ -1101,13 +1148,9 @@ export async function registerRoutes(app: Express) {
   });
 
   // Get all notifications for the authenticated user
-  app.get("/api/notifications", async (req, res) => {
+  app.get("/api/notifications", requireFirebaseAuth, async (req, res) => {
     try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
-      }
+      const firebaseUid = res.locals.firebaseUid as string;
       const user = await storage.getUserByFirebaseUid(firebaseUid);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -1304,35 +1347,44 @@ export async function registerRoutes(app: Express) {
   });
 
   // --- Role Selection ---
-  app.put("/api/user/role", async (req: Request, res: Response) => {
-    try {
-      const firebaseUid =
-        req.header("firebase-uid") || req.header("x-firebase-uid");
-      if (!firebaseUid) {
-        return res.status(401).json({ message: "Unauthorized" });
+  app.put(
+    "/api/user/role",
+    requireFirebaseAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const firebaseUid = res.locals.firebaseUid as string;
+        const { role } = req.body;
+        if (!role) {
+          return res.status(400).json({ message: "Role is required" });
+        }
+
+        const allowedRoles = new Set([
+          "farmer",
+          "distributor",
+          "retailer",
+          "consumer",
+        ]);
+        if (!allowedRoles.has(role)) {
+          return res.status(400).json({ message: "Invalid role" });
+        }
+
+        const user = await storage.getUserByFirebaseUid(firebaseUid);
+        if (!user) {
+          return res.status(404).json({ message: "User not found" });
+        }
+
+        const updatedUser = await storage.updateUser(user.id, {
+          role,
+          roleSelected: true,
+        });
+
+        return res.json(updatedUser);
+      } catch (error) {
+        console.error("Error updating user role:", error);
+        return res.status(500).json({ message: "Failed to update role" });
       }
-
-      const { role } = req.body;
-      if (!role) {
-        return res.status(400).json({ message: "Role is required" });
-      }
-
-      const user = await storage.getUserByFirebaseUid(firebaseUid);
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-
-      const updatedUser = await storage.updateUser(user.id, {
-        role,
-        roleSelected: true,
-      });
-
-      return res.json(updatedUser);
-    } catch (error) {
-      console.error("Error updating user role:", error);
-      return res.status(500).json({ message: "Failed to update role" });
-    }
-  });
+    },
+  );
 
   // --- QR Code Routes ---
   app.get("/api/products/:id/qrcode", async (req: Request, res: Response) => {
@@ -1483,13 +1535,11 @@ export async function registerRoutes(app: Express) {
   // Update product status to out for delivery (correct workflow)
   app.put(
     "/api/products/:id/out-for-delivery",
+    requireFirebaseAuth,
     async (req: Request, res: Response) => {
       try {
         const productId = req.params.id;
-        const firebaseUid =
-          req.header("firebase-uid") || req.header("x-firebase-uid");
-        if (!firebaseUid)
-          return res.status(401).json({ message: "Unauthorized" });
+        const firebaseUid = res.locals.firebaseUid as string;
         const user = await storage.getUserByFirebaseUid(firebaseUid);
         if (!user) return res.status(404).json({ message: "User not found" });
 

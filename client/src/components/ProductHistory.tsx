@@ -1,10 +1,11 @@
 // Update your ProductHistory component
 
 import { Calendar, DollarSign, Eye, MapPin, Package, User } from "lucide-react";
-import type React from "react";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PaymentProofModal } from "./PaymentProofModal";
+import CopyableText from "./ui/CopyableText";
+import EmptyState from "./ui/EmptyState";
 
 interface RegistrationEvent {
   id: string;
@@ -157,7 +158,10 @@ export function ProductHistory({ productId }: ProductHistoryProps) {
         <CardContent>
           {events.length === 0 ? (
             <div className="text-muted-foreground">
-              No registration events found.
+              <EmptyState
+                title="No product history found"
+                description="Registration and ownership history will appear here."
+              />
             </div>
           ) : (
             <ol className="space-y-6">
@@ -173,6 +177,9 @@ export function ProductHistory({ productId }: ProductHistoryProps) {
 
                 return (
                   <li key={event.id} className="flex items-start gap-3">
+                    <div className="mb-2">
+                      <CopyableText text={event.id} />
+                    </div>
                     <div className="flex-shrink-0">
                       <User className="w-4 h-4 text-accent mt-1" />
                     </div>

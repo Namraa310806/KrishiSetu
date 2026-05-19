@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
+import { getAuthHeaders } from "@/lib/authHeaders";
 import { ProductSearch } from "./ProductSearch";
 import { UserSearch } from "./UserSearch";
 
@@ -149,10 +150,9 @@ export function OwnershipManagementPanel({
 
       const response = await fetch("/api/ownership-transfers", {
         method: "POST",
-        headers: {
+        headers: await getAuthHeaders({
           "Content-Type": "application/json",
-          "firebase-uid": user.firebaseUid,
-        },
+        }),
         body: JSON.stringify(requestBody),
       });
 

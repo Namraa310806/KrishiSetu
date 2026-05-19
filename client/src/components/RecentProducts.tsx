@@ -4,9 +4,11 @@ import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import EmptyState from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useUserProducts } from "@/hooks/useProducts";
+import CopyableText from "./ui/CopyableText";
 
 export function RecentProducts() {
   const { user } = useAuth();
@@ -89,18 +91,18 @@ export function RecentProducts() {
       <CardContent className="p-0">
         {recentProducts.length === 0 ? (
           <div className="p-8 text-center">
-            <p className="text-muted-foreground" data-testid="text-no-products">
-              No products registered yet.
+            <div className="flex flex-col items-center gap-4">
+              <EmptyState
+                title="No products found"
+                description="Recently registered products will appear here."
+              />
+
               <Link href="/product-registration">
-                <Button
-                  variant="link"
-                  className="p-0 ml-1"
-                  data-testid="link-register-first"
-                >
+                <Button variant="default" data-testid="link-register-first">
                   Register your first product
                 </Button>
               </Link>
-            </p>
+            </div>
           </div>
         ) : (
           <div className="divide-y divide-border">
@@ -123,12 +125,15 @@ export function RecentProducts() {
                       >
                         {product.name}
                       </h4>
-                      <p
+                      <div
                         className="text-sm text-muted-foreground"
                         data-testid={`text-product-batch-${product.id}`}
                       >
-                        Batch #{product.batchId}
-                      </p>
+                        <CopyableText text={`Batch #${product.batchId}`} />
+                      </div>
+                      <div className="mt-1">
+                        <CopyableText text={product.id} />
+                      </div>
                       <div className="flex items-center gap-4 mt-1">
                         <Badge
                           variant="secondary"

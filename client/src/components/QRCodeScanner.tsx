@@ -1,4 +1,4 @@
-import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
+import { BrowserQRCodeReader, IScannerControls } from "@zxing/browser";
 import {
   AlertTriangle,
   Camera,
@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useProductByBatch } from "@/hooks/useProducts";
+import { getAuthHeaders } from "@/lib/authHeaders";
 
 export function QRCodeScanner() {
   const [isScanning, setIsScanning] = useState(false);
@@ -130,7 +131,7 @@ export function QRCodeScanner() {
             let batchId = trimmedText;
 
             // Check if it's a full URL and extract the batch ID
-            const urlMatch = trimmedText.match(/\/product\/([a-f0-9-]+)$/i);
+            const urlMatch = trimmedText.match(/\/product\/([a-f0-9\-]+)$/i);
             if (urlMatch) {
               batchId = urlMatch[1];
             } else if (trimmedText.includes("/product/")) {
@@ -274,10 +275,9 @@ export function QRCodeScanner() {
 
           const response = await fetch("/api/scans", {
             method: "POST",
-            headers: {
+            headers: await getAuthHeaders({
               "Content-Type": "application/json",
-              "firebase-uid": user.firebaseUid,
-            },
+            }),
             body: JSON.stringify({
               productId: product.id,
               userId: user.id,

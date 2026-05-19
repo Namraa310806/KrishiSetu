@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useLocation } from "wouter"; // Wouter hook
 import "./LandingPage.css";
+import { ModeToggle } from "../components/mode-toggle";
 
 const LandingPage = () => {
   const [, setLocation] = useLocation(); // Hook for navigation
@@ -35,6 +36,7 @@ const LandingPage = () => {
     <div className="landing-page">
       <nav className="navbar">
         <div className="logo">KrishiSetu</div>
+        <ModeToggle />
         <ul className="nav-links">
           <li onClick={() => navigateTo("/HowItWorks")}>How it works</li>
           <li onClick={() => navigateTo("/about")}>About</li>

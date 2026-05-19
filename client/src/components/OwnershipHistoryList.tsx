@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
+import CopyableText from "./ui/CopyableText";
+import EmptyState from "./ui/EmptyState";
 
 interface ProductOwner {
   _id: string;
@@ -97,7 +99,10 @@ export function OwnershipHistoryList({ productId }: OwnershipHistoryListProps) {
     return (
       <div className="text-center py-6">
         <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-        <p className="text-muted-foreground">No ownership records found.</p>
+        <EmptyState
+          title="No ownership history found"
+          description="Ownership records will appear here once available."
+        />
       </div>
     );
   }
@@ -142,12 +147,9 @@ export function OwnershipHistoryList({ productId }: OwnershipHistoryListProps) {
                 </div>
               </div>
               <div className="text-right">
-                <Badge
-                  variant="outline"
-                  className="bg-primary/10 text-primary border-primary/20"
-                >
-                  Block #{owner.blockNumber}
-                </Badge>
+                <div className="mt-1">
+                  <CopyableText text={`Block #${owner.blockNumber}`} />
+                </div>
               </div>
             </div>
 

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/hooks/useAuth";
+import { getAuthHeaders } from "@/lib/authHeaders";
 
 interface ProductSearchProps {
   onProductSelect: (product: Product) => void;
@@ -34,7 +34,6 @@ export function ProductSearch({
   const searchRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
-  const { user } = useAuth();
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -105,11 +104,8 @@ export function ProductSearch({
           setIsSearching(false);
           return;
         }
-        const response = await fetch(url, {
-          headers: {
-            "firebase-uid": user?.firebaseUid || "",
-          },
-        });
+        const headers = await getAuthHeaders();
+        const response = await fetch(url, { headers });
         if (!response.ok) throw new Error("Failed to search products");
         const data = await response.json();
         setResults(data);
@@ -127,7 +123,7 @@ export function ProductSearch({
         setIsSearching(false);
       }
     },
-    [ownerId, toast, user, searchEndpoint],
+    [ownerId, toast, searchEndpoint],
   );
 
   // Debounced search

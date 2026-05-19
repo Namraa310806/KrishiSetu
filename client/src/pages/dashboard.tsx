@@ -1,4 +1,5 @@
-import { Plus, QrCode } from "lucide-react";
+import { Bell, LogOut, Plus, QrCode, User } from "lucide-react";
+import { useTheme } from "next-themes";
 import React, { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { NavigationHeader } from "@/components/NavigationHeader";
@@ -15,6 +16,7 @@ import { DistributorProductForm } from "../components/DistributorProductForm";
 import { RetailerProductForm } from "../components/RetailerProductForm";
 
 export default function Dashboard() {
+  const { theme, setTheme } = useTheme();
   const { user, loading, refreshUser } = useAuth();
   const [activeForm, setActiveForm] = useState<
     "farmer" | "distributor" | "retailer" | null
@@ -78,6 +80,7 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen bg-background font-sans">
         <NavigationHeader />
+
         <main className="pt-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center text-muted-foreground">
             Loading dashboard...
