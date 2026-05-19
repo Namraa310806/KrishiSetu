@@ -467,14 +467,14 @@ app.patch("/api/users/:id", requireFirebaseAuth, async (req: Request, res: Respo
   // --- Ownership Transfer Routes ---
   app.post("/api/ownership-transfers", requireFirebaseAuth, async (req: Request, res: Response) => {
     try {
-      console.log("HIT /api/ownership-transfers ENDPOINT!");
+      console.log("Ownership transfer request received");
 
       const firebaseUid = res.locals.firebaseUid as string;
       const currentUser = await storage.getUserByFirebaseUid(firebaseUid);
       if (!currentUser) {
-        console.log("[OWNERSHIP REQUEST] User not found for firebaseUid:", firebaseUid);
         return res.status(404).json({ message: "User not found" });
       }
+
 
       // Validate required fields manually since we're not using the full schema
       const productId = req.body.productId;
@@ -482,11 +482,7 @@ app.patch("/api/users/:id", requireFirebaseAuth, async (req: Request, res: Respo
       const notes = req.body.notes;
       const toUserId = req.body.toUserId;
 
-      console.log("[OWNERSHIP REQUEST] Raw req.body:", req.body);
-      console.log("[OWNERSHIP REQUEST] Direct access - toUserId:", req.body.toUserId);
-      console.log("[OWNERSHIP REQUEST] Direct access - productId:", req.body.productId);
-      console.log("[OWNERSHIP REQUEST] Direct access - transferType:", req.body.transferType);
-      console.log("[OWNERSHIP REQUEST] Direct access - notes:", req.body.notes);
+
 
       if (!productId) {
         console.log("[OWNERSHIP REQUEST] Product ID is missing");
@@ -537,7 +533,8 @@ app.patch("/api/users/:id", requireFirebaseAuth, async (req: Request, res: Respo
         status: "pending"
       });
 
-      console.log(`[OWNERSHIP REQUEST] Requester: ${currentUser.name} (${currentUser.id}) -> Owner: ${product.ownerId}`);
+      console.log("Ownership request created");
+
 
       // Create notification for the recipient
       await storage.createNotification({
@@ -552,10 +549,8 @@ app.patch("/api/users/:id", requireFirebaseAuth, async (req: Request, res: Respo
         createdAt: new Date()
       });
 
-      // DEBUG: Log notification recipients
-      console.log(`Notification sent to userId: ${recipientUserId} for product: ${product.name}`);
+      console.log("Ownership notification created");
 
-      console.log(`[NOTIFICATION CREATED] Sent to user: ${recipientUserId} for product: ${product.name}`);
 
       await storage.logProductEvent(
         product.id,
@@ -658,12 +653,8 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
   const transferId = req.params.id;
   const firebaseUid = res.locals.firebaseUid as string;
 
-  console.log("Accept ownership transfer called");
-  console.log("transferId:", transferId);
-  console.log("firebaseUid:", firebaseUid);
-  console.log("req.headers:", req.headers);
-  console.log("req.body:", req.body);
-  console.log("req.file:", req.file);
+  console.log("Ownership transfer accept request received");
+
 
   // Extract all form data
   const formData = { ...req.body };
@@ -688,8 +679,8 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
     }
   }
 
-  console.log("filledFields:", filledFields);
-  console.log("registeredFields:", registeredFields);
+  console.log("Ownership registration fields processed");
+
 
   // Parse certifications if sent as JSON string
   if (filledFields.certifications && typeof filledFields.certifications === "string") {
@@ -744,9 +735,9 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
     if (!product) return res.status(404).json({ message: "Product not found" });
 
     // Verify ownership chain integrity before allowing transfer
-    console.log("Verifying ownership chain");
+    console.log("Ownership chain verification started");
     const verificationResult = await storage.verifyOwnershipChain(product.id);
-    console.log("Verification result:", verificationResult);
+
     if (!verificationResult.valid) {
       return res.status(400).json({
         message: "Cannot transfer ownership: Blockchain integrity compromised",
@@ -755,11 +746,13 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
     }
 
     // 1) Update transfer status -> completed
-    console.log("Updating transfer status");
+    console.log("Ownership transfer validation completed");
+
     await storage.updateOwnershipTransfer(transferId, { status: "completed" });
 
     // 2) Update product with the filled fields
-    console.log("Updating product");
+    console.log("Ownership transfer updating completed");
+
     await storage.updateProduct(product.id, { ownerId: user.id, ...filledFields });
 
     // 3) Add to product owners blockchain
@@ -797,7 +790,8 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
     const previousOwner = await storage.getUser(transfer.fromUserId);
 
     // In your backend endpoint, update the logProductEvent call:
-    console.log("Logging product event");
+    console.log("Product event logging started");
+
     await storage.logProductEvent(
       product.id,
       "ownership_registration",
@@ -833,11 +827,10 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
 
 // Debug endpoint to check form data
 app.post("/api/debug/form-data", upload.single("paymentProof"), async (req: Request, res: Response) => {
-  console.log("Headers:", req.headers);
-  console.log("Body:", req.body);
-  console.log("File:", req.file);
-  
-  // Check all possible fields
+  console.log("Debug form-data received");
+
+  // NOTE: This endpoint must not echo raw headers/body/file content.
+
   const possibleFields = [
     "name", "category", "description", "quantity", "unit",
     "distributorName", "warehouseLocation", "dispatchDate", 
@@ -854,11 +847,9 @@ app.post("/api/debug/form-data", upload.single("paymentProof"), async (req: Requ
   console.log("Received fields:", receivedFields);
   
   res.json({
-    headers: req.headers,
-    body: req.body,
-    file: req.file,
-    receivedFields: receivedFields
+    message: "Debug form-data processed"
   });
+
 });
 
   app.put("/api/ownership-transfers/:id/reject", requireFirebaseAuth, async (req: Request, res: Response) => {
