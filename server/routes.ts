@@ -812,7 +812,19 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
 
     // 2) Update product with the filled fields
     console.log("Updating product");
-    await storage.updateProduct(product.id, { ownerId: user.id, ...validatedFields.data });
+    // Coerce types to match product schema (quantity and price are stored as strings)
+    const sanitizedUpdate: Record<string, unknown> = { ownerId: user.id };
+    for (const [k, v] of Object.entries(validatedFields.data)) {
+      if (v === undefined) continue;
+      if (k === "quantity" || k === "price") {
+        // Convert numeric values to strings to match `productSchema`
+        sanitizedUpdate[k] = typeof v === "number" ? String(v) : v;
+      } else {
+        sanitizedUpdate[k] = v;
+      }
+    }
+
+    await storage.updateProduct(product.id, sanitizedUpdate);
 
     // 3) Add to product owners blockchain
     console.log("Adding product owner");
@@ -863,7 +875,7 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
         previousOwnerName: previousOwner?.username || previousOwner?.name || "Unknown", // Use username if available
         previousOwnerRole: previousOwner?.role || "Unknown",
         registeredFields: registeredFields,
-        ...validatedFields.data
+        ...sanitizedUpdate
       }
     );
 
