@@ -813,24 +813,53 @@ export async function registerRoutes(app: Express) {
    *  - body: { productData?: {...}, productId?: string }
    */
   app.put(
-    "/api/ownership-transfers/:id/accept",
-    requireFirebaseAuth,
-    upload.single("paymentProof"),
-    async (req: Request, res: Response) => {
-      const transferId = req.params.id;
-      const firebaseUid = res.locals.firebaseUid as string;
+  "/api/ownership-transfers/:id/accept",
+  requireFirebaseAuth,
+  upload.single("paymentProof"),
+  async (req: Request, res: Response) => {
+    const transferId = req.params.id;
+    const firebaseUid = res.locals.firebaseUid as string;
 
-      console.log("Accept ownership transfer called");
-      console.log("transferId:", transferId);
-      console.log("firebaseUid:", firebaseUid);
-      console.log("req.headers:", req.headers);
-      console.log("req.body:", req.body);
-      console.log("req.file:", req.file);
+    console.log("Accept ownership transfer called");
+    console.log("transferId:", transferId);
+    console.log("firebaseUid:", firebaseUid);
 
-      // Extract all form data
+    try {
+      const user = await storage.getUserByFirebaseUid(firebaseUid);
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      const transfer = await storage.getOwnershipTransfer(transferId);
+      if (!transfer)
+        return res.status(404).json({ message: "Transfer not found" });
+
+      if (transfer.toUserId !== user.id) {
+        return res
+          .status(403)
+          .json({ message: "You are not the recipient of this transfer" });
+      }
+
+      if (transfer.status !== "pending") {
+        if (transfer.status === "completed")
+          return res.json({ message: "Transfer already completed" });
+        return res.status(400).json({ message: "Transfer is not pending" });
+      }
+
+      const product = await storage.getProduct(transfer.productId);
+      if (!product)
+        return res.status(404).json({ message: "Product not found" });
+
+      // Verify ownership chain integrity
+      const verificationResult = await storage.verifyOwnershipChain(product.id);
+      if (!verificationResult.valid) {
+        return res.status(400).json({
+          message:
+            "Cannot transfer ownership: Blockchain integrity compromised",
+          errors: verificationResult.errors,
+        });
+      }
+
+      // Extract and process form data
       const formData = { ...req.body };
-
-      // Define all possible form fields that might be submitted
       const possibleFormFields = [
         "name",
         "category",
@@ -848,11 +877,9 @@ export async function registerRoutes(app: Express) {
         "arrivalDate",
       ];
 
-      // Create an object to store the actual filled fields
       const filledFields: Record<string, any> = {};
       const registeredFields: string[] = [];
 
-      // Check which fields were actually filled
       for (const field of possibleFormFields) {
         if (
           formData[field] !== undefined &&
@@ -864,22 +891,20 @@ export async function registerRoutes(app: Express) {
         }
       }
 
-      console.log("filledFields:", filledFields);
-      console.log("registeredFields:", registeredFields);
-
-      // Parse certifications if sent as JSON string
+      // Parse certifications and numbers
       if (
         filledFields.certifications &&
         typeof filledFields.certifications === "string"
       ) {
         try {
-          filledFields.certifications = JSON.parse(filledFields.certifications);
+          filledFields.certifications = JSON.parse(
+            filledFields.certifications,
+          );
         } catch (e) {
           console.error("Error parsing certifications:", e);
         }
       }
 
-      // Parse numbers if needed
       if (
         filledFields.price &&
         typeof filledFields.price === "string" &&
@@ -887,6 +912,7 @@ export async function registerRoutes(app: Express) {
       ) {
         filledFields.price = Number(filledFields.price);
       }
+
       if (
         filledFields.quantity &&
         typeof filledFields.quantity === "string" &&
@@ -895,7 +921,6 @@ export async function registerRoutes(app: Express) {
         filledFields.quantity = Number(filledFields.quantity);
       }
 
-      // If you handle paymentProof file upload, set paymentProofUrl here
       if (req.file && req.file.filename) {
         filledFields.paymentProofUrl = `/uploads/payment-proofs/${req.file.filename}`;
         if (!registeredFields.includes("paymentProofUrl")) {
@@ -903,271 +928,19 @@ export async function registerRoutes(app: Express) {
         }
       }
 
-      try {
-        console.log("Getting user by firebaseUid");
-        const user = await storage.getUserByFirebaseUid(firebaseUid);
-        console.log("User found:", user ? user.id : "null");
-        if (!user) return res.status(404).json({ message: "User not found" });
-
-        console.log("Getting transfer by id");
-        const transfer = await storage.getOwnershipTransfer(transferId);
-        console.log("Transfer found:", transfer ? transfer.id : "null");
-        if (!transfer)
-          return res.status(404).json({ message: "Transfer not found" });
-
-        console.log(
-          "Checking if user is recipient:",
-          transfer.toUserId === user.id,
-        );
-        if (transfer.toUserId !== user.id) {
-          return res
-            .status(403)
-            .json({ message: "You are not the recipient of this transfer" });
-        }
-
-        console.log("Checking transfer status:", transfer.status);
-        if (transfer.status !== "pending") {
-          if (transfer.status === "completed")
-            return res.json({ message: "Transfer already completed" });
-          return res.status(400).json({ message: "Transfer is not pending" });
-        }
-
-        console.log("Getting product");
-        const product = await storage.getProduct(transfer.productId);
-        console.log("Product found:", product ? product.id : "null");
-        if (!product)
-          return res.status(404).json({ message: "Product not found" });
-
-        // Verify ownership chain integrity before allowing transfer
-        console.log("Verifying ownership chain");
-        const verificationResult = await storage.verifyOwnershipChain(
-          product.id,
-        );
-        console.log("Verification result:", verificationResult);
-        if (!verificationResult.valid) {
-          return res.status(400).json({
-            message:
-              "Cannot transfer ownership: Blockchain integrity compromised",
-            errors: verificationResult.errors,
-          });
-        }
-
-// server/routes/ownershipTransfers.ts
-
-/**
- * Accept an ownership transfer AND optionally update/register product data.
- * Expects:
- *  - transferId in params
- *  - headers: Authorization: Bearer <Firebase ID token>
- *  - body: { productData?: {...}, productId?: string }
- */
-app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.single("paymentProof"), async (req: Request, res: Response) => {
-  const transferId = req.params.id;
-  const firebaseUid = res.locals.firebaseUid as string;
-
-  console.log("Ownership transfer accept request received");
-
-
-  // Extract all form data
-  const formData = { ...req.body };
-
-  // Define all possible form fields that might be submitted
-  const possibleFormFields = [
-    "name", "category", "description", "quantity", "unit",
-    "distributorName", "warehouseLocation", "dispatchDate",
-    "certifications", "price", "paymentProofUrl",
-    "storeName", "storeLocation", "arrivalDate"
-  ];
-
-  // Create an object to store the actual filled fields
-  const filledFields: Record<string, any> = {};
-  const registeredFields: string[] = [];
-
-  // Check which fields were actually filled
-  for (const field of possibleFormFields) {
-    if (formData[field] !== undefined && formData[field] !== null && formData[field] !== "") {
-      filledFields[field] = formData[field];
-      registeredFields.push(field);
-    }
-  }
-
-  console.log("Ownership registration fields processed");
-
-        // 1) Update transfer status -> completed
-        console.log("Updating transfer status");
-        await storage.updateOwnershipTransfer(transferId, {
-          status: "completed",
-        });
-
-        // 2) Update product with the filled fields
-        console.log("Updating product");
-        await storage.updateProduct(product.id, {
-          ownerId: user.id,
-          ...filledFields,
-        });
-
-        // 3) Add to product owners blockchain
-        console.log("Adding product owner");
-        const newOwnerBlock = await storage.addProductOwner({
-          productId: product.id,
-          ownerId: user.id,
-          username: user.username,
-          name: user.name,
-          addedBy: transfer.fromUserId,
-          role: user.role,
-          canEditFields: ["quantity", "location"],
-          transferType: transfer.transferType,
-          createdAt: new Date(),
-        });
-
-        // 4) Create notification for previous owner
-        console.log("Creating notification for previous owner");
-        await storage.createNotification({
-          userId: transfer.fromUserId,
-          title: "Ownership Transfer Completed",
-          message: `${user.name} has accepted ownership of ${product.name}.`,
-          type: "ownership_transfer",
-          productId: product.id,
-          transferId: transfer.id,
-          read: false,
-          createdAt: new Date(),
-        });
-
-        // Fetch previous owner info
-        const previousOwner = await storage.getUser(transfer.fromUserId);
-
-        // In your backend endpoint, update the logProductEvent call:
-        console.log("Logging product event");
-        await storage.logProductEvent(
-          product.id,
-          "ownership_registration",
-          `${user.name} (${user.role}) registered product details.`,
-          user.id,
-          {
-            transferId: transfer.id,
-            registrationType: user.role,
-            userName: user.username, // Store username instead of name
-            userRole: user.role,
-            previousOwnerName:
-              previousOwner?.username || previousOwner?.name || "Unknown", // Use username if available
-            previousOwnerRole: previousOwner?.role || "Unknown",
-            registeredFields: registeredFields,
-            ...filledFields,
-          },
-        );
-
-        console.log("Returning success");
-        return res.json({
-          message: "Ownership transfer completed successfully",
-          ownershipBlock: {
-            blockNumber: newOwnerBlock.blockNumber,
-            ownershipHash: newOwnerBlock.ownershipHash,
-            previousOwnerHash: newOwnerBlock.previousOwnerHash,
-          },
-          productId: product.id,
-        });
-      } catch (error) {
-        console.error("Error accepting ownership transfer:", error);
-        return res
-          .status(500)
-          .json({ message: "Failed to accept ownership transfer" });
-      }
-    },
-  );
-
-  // Debug endpoint to check form data
-  app.post(
-    "/api/debug/form-data",
-    upload.single("paymentProof"),
-    async (req: Request, res: Response) => {
-      console.log("Headers:", req.headers);
-      console.log("Body:", req.body);
-      console.log("File:", req.file);
-
-      // Check all possible fields
-      const possibleFields = [
-        "name",
-        "category",
-        "description",
-        "quantity",
-        "unit",
-        "distributorName",
-        "warehouseLocation",
-        "dispatchDate",
-        "certifications",
-        "price",
-        "storeName",
-        "storeLocation",
-        "arrivalDate",
-      ];
-
-      const receivedFields: Record<string, any> = {};
-      for (const field of possibleFields) {
-        if (req.body[field] !== undefined) {
-          receivedFields[field] = req.body[field];
-        }
-      }
-
-      console.log("Received fields:", receivedFields);
-
-      res.json({
-        headers: req.headers,
-        body: req.body,
-        file: req.file,
-        receivedFields: receivedFields,
+      // Update transfer status
+      await storage.updateOwnershipTransfer(transferId, {
+        status: "completed",
       });
-    },
-  );
 
-  app.put(
-    "/api/ownership-transfers/:id/reject",
-    requireFirebaseAuth,
-    async (req: Request, res: Response) => {
-      try {
-        const transferId = req.params.id;
-        const firebaseUid = res.locals.firebaseUid as string;
-        const user = await storage.getUserByFirebaseUid(firebaseUid);
-        if (!user) {
-          return res.status(404).json({ message: "User not found" });
-        }
-
-        // Get the transfer
-        const transfer = await storage.getOwnershipTransfer(transferId);
-        if (!transfer) {
-          return res.status(404).json({ message: "Transfer not found" });
-        }
-
-        if (transfer.toUserId !== user.id) {
-          return res
-            .status(403)
-            .json({ message: "You are not the recipient of this transfer" });
-        }
-
-    // Verify ownership chain integrity before allowing transfer
-    console.log("Ownership chain verification started");
-    const verificationResult = await storage.verifyOwnershipChain(product.id);
-
-    if (!verificationResult.valid) {
-      return res.status(400).json({
-        message: "Cannot transfer ownership: Blockchain integrity compromised",
-        errors: verificationResult.errors,
+      // Update product
+      await storage.updateProduct(product.id, {
+        ownerId: user.id,
+        ...filledFields,
       });
-    }
 
-    // 1) Update transfer status -> completed
-    console.log("Ownership transfer validation completed");
-
-    await storage.updateOwnershipTransfer(transferId, { status: "completed" });
-
-    // 2) Update product with the filled fields
-    console.log("Ownership transfer updating completed");
-
-    await storage.updateProduct(product.id, { ownerId: user.id, ...filledFields });
-
-    // 3) Add to product owners blockchain
-    console.log("Adding product owner");
-    const newOwnerBlock = await storage.addProductOwner(
-      {
+      // Add to product owners blockchain
+      const newOwnerBlock = await storage.addProductOwner({
         productId: product.id,
         ownerId: user.id,
         username: user.username,
@@ -1177,13 +950,10 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
         canEditFields: ["quantity", "location"],
         transferType: transfer.transferType,
         createdAt: new Date(),
-      }
-    );
+      });
 
-    // 4) Create notification for previous owner
-    console.log("Creating notification for previous owner");
-    await storage.createNotification(
-      {
+      // Create notification for previous owner
+      await storage.createNotification({
         userId: transfer.fromUserId,
         title: "Ownership Transfer Completed",
         message: `${user.name} has accepted ownership of ${product.name}.`,
@@ -1192,108 +962,140 @@ app.put("/api/ownership-transfers/:id/accept", requireFirebaseAuth, upload.singl
         transferId: transfer.id,
         read: false,
         createdAt: new Date(),
-      }
-    );
+      });
 
-    // Fetch previous owner info
-    const previousOwner = await storage.getUser(transfer.fromUserId);
+      const previousOwner = await storage.getUser(transfer.fromUserId);
 
-    // In your backend endpoint, update the logProductEvent call:
-    console.log("Product event logging started");
+      // Log product event
+      await storage.logProductEvent(
+        product.id,
+        "ownership_registration",
+        `${user.name} (${user.role}) registered product details.`,
+        user.id,
+        {
+          transferId: transfer.id,
+          registrationType: user.role,
+          userName: user.username,
+          userRole: user.role,
+          previousOwnerName:
+            previousOwner?.username || previousOwner?.name || "Unknown",
+          previousOwnerRole: previousOwner?.role || "Unknown",
+          registeredFields: registeredFields,
+          ...filledFields,
+        },
+      );
 
-    await storage.logProductEvent(
-      product.id,
-      "ownership_registration",
-      `${user.name} (${user.role}) registered product details.`,
-      user.id,
-      {
-        transferId: transfer.id,
-        registrationType: user.role,
-        userName: user.username, // Store username instead of name
-        userRole: user.role,
-        previousOwnerName: previousOwner?.username || previousOwner?.name || "Unknown", // Use username if available
-        previousOwnerRole: previousOwner?.role || "Unknown",
-        registeredFields: registeredFields,
-        ...filledFields
-      }
-    );
-
-    console.log("Returning success");
-    return res.json({
-      message: "Ownership transfer completed successfully",
-      ownershipBlock: {
-        blockNumber: newOwnerBlock.blockNumber,
-        ownershipHash: newOwnerBlock.ownershipHash,
-        previousOwnerHash: newOwnerBlock.previousOwnerHash,
-      },
-      productId: product.id,
-    });
-  } catch (error) {
-    console.error("Error accepting ownership transfer:", error);
-    return res.status(500).json({ message: "Failed to accept ownership transfer" });
-  }
-});
+      return res.json({
+        message: "Ownership transfer completed successfully",
+        ownershipBlock: {
+          blockNumber: newOwnerBlock.blockNumber,
+          ownershipHash: newOwnerBlock.ownershipHash,
+          previousOwnerHash: newOwnerBlock.previousOwnerHash,
+        },
+        productId: product.id,
+      });
+    } catch (error) {
+      console.error("Error accepting ownership transfer:", error);
+      return res
+        .status(500)
+        .json({ message: "Failed to accept ownership transfer" });
+    }
+  },
+);
 
 // Debug endpoint to check form data
-app.post("/api/debug/form-data", upload.single("paymentProof"), async (req: Request, res: Response) => {
-  console.log("Debug form-data received");
+app.post(
+  "/api/debug/form-data",
+  upload.single("paymentProof"),
+  async (req: Request, res: Response) => {
+    const possibleFields = [
+      "name",
+      "category",
+      "description",
+      "quantity",
+      "unit",
+      "distributorName",
+      "warehouseLocation",
+      "dispatchDate",
+      "certifications",
+      "price",
+      "storeName",
+      "storeLocation",
+      "arrivalDate",
+    ];
 
-  // NOTE: This endpoint must not echo raw headers/body/file content.
-
-  const possibleFields = [
-    "name", "category", "description", "quantity", "unit",
-    "distributorName", "warehouseLocation", "dispatchDate", 
-    "certifications", "price", "storeName", "storeLocation", "arrivalDate"
-  ];
-  
-  const receivedFields: Record<string, any> = {};
-  for (const field of possibleFields) {
-    if (req.body[field] !== undefined) {
-      receivedFields[field] = req.body[field];
-    }
-  }
-  
-  console.log("Received fields:", receivedFields);
-  
-  res.json({
-    message: "Debug form-data processed"
-  });
-
-});
-        if (transfer.status !== "pending") {
-          return res.status(400).json({ message: "Transfer is not pending" });
-        }
-
-        // Update transfer status to rejected
-        await storage.updateOwnershipTransfer(transferId, {
-          status: "rejected",
-        });
-
-        // Create notification for the previous owner
-        const product = await storage.getProduct(transfer.productId);
-        if (product) {
-          await storage.createNotification({
-            userId: transfer.fromUserId,
-            title: "Ownership Transfer Rejected",
-            message: `${user.name} has rejected the ownership transfer of ${product.name}.`,
-            type: "ownership_transfer_rejected",
-            productId: product.id,
-            read: false,
-            createdAt: new Date(),
-          });
-        }
-
-        return res.json({
-          message: "Ownership transfer rejected successfully",
-        });
-      } catch (error) {
-        console.error("Error rejecting ownership transfer:", error);
-        return res
-          .status(500)
-          .json({ message: "Failed to reject ownership transfer" });
+    const receivedFields: Record<string, any> = {};
+    for (const field of possibleFields) {
+      if (req.body[field] !== undefined) {
+        receivedFields[field] = req.body[field];
       }
-    },
-  );
+    }
+
+    console.log("Received fields:", receivedFields);
+
+    res.json({
+      message: "Debug form-data processed",
+    });
+  },
+);
+
+app.put(
+  "/api/ownership-transfers/:id/reject",
+  requireFirebaseAuth,
+  async (req: Request, res: Response) => {
+    try {
+      const transferId = req.params.id;
+      const firebaseUid = res.locals.firebaseUid as string;
+      const user = await storage.getUserByFirebaseUid(firebaseUid);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const transfer = await storage.getOwnershipTransfer(transferId);
+      if (!transfer) {
+        return res.status(404).json({ message: "Transfer not found" });
+      }
+
+      if (transfer.toUserId !== user.id) {
+        return res
+          .status(403)
+          .json({ message: "You are not the recipient of this transfer" });
+      }
+
+      if (transfer.status !== "pending") {
+        return res.status(400).json({ message: "Transfer is not pending" });
+      }
+
+      // Update transfer status to rejected
+      await storage.updateOwnershipTransfer(transferId, {
+        status: "rejected",
+      });
+
+      // Create notification for the previous owner
+      const product = await storage.getProduct(transfer.productId);
+      if (product) {
+        await storage.createNotification({
+          userId: transfer.fromUserId,
+          title: "Ownership Transfer Rejected",
+          message: `${user.name} has rejected the ownership transfer of ${product.name}.`,
+          type: "ownership_transfer_rejected",
+          productId: product.id,
+          read: false,
+          createdAt: new Date(),
+        });
+      }
+
+      return res.json({
+        message: "Ownership transfer rejected successfully",
+      });
+    } catch (error) {
+      console.error("Error rejecting ownership transfer:", error);
+      return res
+        .status(500)
+        .json({ message: "Failed to reject ownership transfer" });
+    }
+  },
+);
 
   // Get pending transfer requests for user
   app.get(
