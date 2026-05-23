@@ -505,71 +505,69 @@ export async function registerRoutes(app: Express) {
 
   // --- Transaction Routes ---
   app.post("/api/transactions", requireFirebaseAuth, async (req: Request, res: Response) => {
-    const parse = insertTransactionSchema.safeParse(req.body);
-    if (!parse.success) {
-      return res.status(400).json({
-        message: "Invalid transaction data",
-        errors: parse.error.format(),
-      });
-    }
-    const firebaseUid = res.locals.firebaseUid as string;
-    const user = await storage.getUserByFirebaseUid(firebaseUid);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    if (parse.data.fromUserId && parse.data.fromUserId !== user.id) {
-      return res.status(403).json({ message: "Cannot create transactions for another user" });
-    }
-    const transaction = await storage.createTransaction({
-      ...parse.data,
-      fromUserId: parse.data.fromUserId || user.id
+  const parse = insertTransactionSchema.safeParse(req.body);
+  if (!parse.success) {
+    return res.status(400).json({
+      message: "Invalid transaction data",
+      errors: parse.error.format(),
     });
-    return res.status(201).json(transaction);
+  }
+  const firebaseUid = res.locals.firebaseUid as string;
+  const user = await storage.getUserByFirebaseUid(firebaseUid);
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+  if (parse.data.fromUserId && parse.data.fromUserId !== user.id) {
+    return res.status(403).json({ message: "Cannot create transactions for another user" });
+  }
+  const transaction = await storage.createTransaction({
+    ...parse.data,
+    fromUserId: parse.data.fromUserId || user.id
   });
-
+  return res.status(201).json(transaction);
+});
   // --- Quality Check Routes ---
   app.post("/api/quality-checks", requireFirebaseAuth, async (req: Request, res: Response) => {
-    const parse = insertQualityCheckSchema.safeParse(req.body);
-    if (!parse.success) {
-      return res.status(400).json({
-        message: "Invalid quality check data",
-        errors: parse.error.format(),
-      });
-    }
-    const firebaseUid = res.locals.firebaseUid as string;
-    const user = await storage.getUserByFirebaseUid(firebaseUid);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    if (parse.data.inspectorId !== user.id) {
-      return res.status(403).json({ message: "Cannot create quality checks for another inspector" });
-    }
-    const check = await storage.createQualityCheck(parse.data);
-    return res.status(201).json(check);
-  });
-
-  // --- Scan Routes ---
-  app.post("/api/scans", requireFirebaseAuth, async (req: Request, res: Response) => {
-    const parse = insertScanSchema.safeParse(req.body);
-    if (!parse.success) {
-      return res
-        .status(400)
-        .json({ message: "Invalid scan data", errors: parse.error.format() });
-    }
-    const firebaseUid = res.locals.firebaseUid as string;
-    const user = await storage.getUserByFirebaseUid(firebaseUid);
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    if (parse.data.userId && parse.data.userId !== user.id) {
-      return res.status(403).json({ message: "Cannot create scans for another user" });
-    }
-    const scan = await storage.createScan({
-      ...parse.data,
-      userId: user.id
+  const parse = insertQualityCheckSchema.safeParse(req.body);
+  if (!parse.success) {
+    return res.status(400).json({
+      message: "Invalid quality check data",
+      errors: parse.error.format(),
     });
-    return res.status(201).json(scan);
+  }
+  const firebaseUid = res.locals.firebaseUid as string;
+  const user = await storage.getUserByFirebaseUid(firebaseUid);
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+  if (parse.data.inspectorId !== user.id) {
+    return res.status(403).json({ message: "Cannot create quality checks for another inspector" });
+  }
+  const check = await storage.createQualityCheck(parse.data);
+  return res.status(201).json(check);
+});
+  // --- Scan Routes ---
+ app.post("/api/scans", requireFirebaseAuth, async (req: Request, res: Response) => {
+  const parse = insertScanSchema.safeParse(req.body);
+  if (!parse.success) {
+    return res
+      .status(400)
+      .json({ message: "Invalid scan data", errors: parse.error.format() });
+  }
+  const firebaseUid = res.locals.firebaseUid as string;
+  const user = await storage.getUserByFirebaseUid(firebaseUid);
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+  if (parse.data.userId && parse.data.userId !== user.id) {
+    return res.status(403).json({ message: "Cannot create scans for another user" });
+  }
+  const scan = await storage.createScan({
+    ...parse.data,
+    userId: user.id
   });
+  return res.status(201).json(scan);
+});
 
   // Recent scans endpoint
   app.get("/api/scans/recent", async (req: Request, res: Response) => {
