@@ -15,9 +15,7 @@ export default function NotFound() {
                 404 Page Not Found
               </h1>
             </div>
-            <p className="mt-4 text-sm text-gray-600">
-              Developers forget to add the page !!!!
-            </p>
+            <p className="mt-4 text-sm text-gray-600">Developers forget to add the page !!!!</p>
           </CardContent>
         </Card>
       </div>

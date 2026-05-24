@@ -75,8 +75,8 @@ export function QRCodeGenerator({ product }: QRCodeGeneratorProps) {
             <span className="font-medium">Batch ID:</span> {product.batchId}
           </div>
           <div data-testid="text-blockchain-hash">
-            <span className="font-medium">Blockchain:</span>{" "}
-            {product.blockchainHash?.slice(0, 12)}...
+            <span className="font-medium">Blockchain:</span> {product.blockchainHash?.slice(0, 12)}
+            ...
           </div>
         </div>
 
